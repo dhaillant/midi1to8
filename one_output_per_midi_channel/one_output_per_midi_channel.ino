@@ -24,6 +24,8 @@
   };    // array of output pin numbers (Arduino #)
 
 
+#define SYS_MSG_FILTER 0xF0
+
 
 #include <MIDI.h>
 
@@ -97,10 +99,11 @@ void setup()
   TIMSK0 |= (1 << OCIE0A);                      // Enable timer compare interrupt
   sei();                                        // Enable interrupts
 
-  MIDI.turnThruOff();
-  
   // Initiate MIDI communications, listen to ALL channels
   MIDI.begin(MIDI_CHANNEL);
+
+  // Do not repeat automatically
+  MIDI.turnThruOff();
 }
 
 void loop()
@@ -109,26 +112,52 @@ void loop()
   if (MIDI.read())
   {
     uint8_t channel = MIDI.getChannel();
+    uint8_t type = MIDI.getType();
 
-    if ((channel > 0) && (channel <= 8))
+    // test if we have a system message (>= 0xF0) or channel message (< 0xF0)
+    if ((type & SYS_MSG_FILTER) == SYS_MSG_FILTER)
     {
-      // enable the output corresponding to the incoming MIDI message channel
-      digitalWrite(midi_out_pins[channel - 1], LOW);
+      // this is a system message
+      // send to all outputs (set outputs D2 to D9  LOW)
 
-      // write the message back
-      MIDI.send(MIDI.getType(),
-                MIDI.getData1(),
-                MIDI.getData2(),
-                channel);
-      
-      // wait until transmit buffer is empty
-      Serial.flush();
+      PORTD &= 0b00000011;  // set PORTD 2 to 7 (outputs D2 to D7)  LOW
+      PORTB &= 0b11111100;  // set PORTB 0 and 1 (outputs D8 and D9)  LOW
 
-      // disable the output
-      digitalWrite(midi_out_pins[channel - 1], HIGH);
+        // write the message back
+        MIDI.send(type,
+                  MIDI.getData1(),
+                  MIDI.getData2(),
+                  channel);
+        
+        // wait until transmit buffer is empty
+        Serial.flush();
 
-      blink_MIDI_LED();
+      PORTD |= 0b11111100;  // set PORTD 2 to 7 (outputs D2 to D7)  HIGH
+      PORTB |= 0b00000011;  // set PORTB 0 and 1 (outputs D8 and D9)  HIGH
     }
+    else  // this is a channel message
+    {
+      // exclude messages that are out of range (channel > 8)
+      if ((channel > 0) && (channel <= 8))
+      {
+        // enable the output corresponding to the incoming MIDI message channel
+        digitalWrite(midi_out_pins[channel - 1], LOW);
+
+        // write the message back
+        MIDI.send(type,
+                  MIDI.getData1(),
+                  MIDI.getData2(),
+                  channel);
+        
+        // wait until transmit buffer is empty
+        Serial.flush();
+  
+        // disable the output
+        digitalWrite(midi_out_pins[channel - 1], HIGH);
+      }
+    }
+
+    blink_MIDI_LED();   // trigger MIDI input LED blinking timer
   }
 
 
