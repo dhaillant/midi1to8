@@ -31,8 +31,8 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 
 
 // blink stuff for input
-bool needs_refresh;
-uint8_t MIDI_blink;
+bool MIDI_LED_needs_refresh;
+uint8_t MIDI_blink_counter;
 
 
 // -----------------------------------------------------------------------------
@@ -46,17 +46,25 @@ ISR(TIMER0_COMPA_vect) {
 
 void tick()
 {
-  if (MIDI_blink)
+  // if MIDI_blink_counter is not 0
+  if (MIDI_blink_counter)
   {
-    --MIDI_blink;
-    needs_refresh = true;
+    --MIDI_blink_counter;
+  }
+  else
+  {
+    // MIDI_blink_counter is 0 so we can request a refresh of the outputs
+    MIDI_LED_needs_refresh = true;
   }
 }
 
 #define MIDI_LED_BLINK_TIME 20
+
+// start MIDI LED timer
 void blink_MIDI_LED(void)
 {
-  MIDI_blink = MIDI_LED_BLINK_TIME;
+  MIDI_blink_counter = MIDI_LED_BLINK_TIME;
+  MIDI_LED_needs_refresh = true;
 }
 
 
@@ -71,6 +79,13 @@ void setup()
   pinMode (MIDI_LED, OUTPUT);
   pinMode (MIDI_OUT, OUTPUT);
 
+  // MIDI outputs
+  for (byte i = 0; i < NBR_MIDI_OUTS; i++)
+  {
+    pinMode(midi_out_pins[i],       OUTPUT);
+    digitalWrite(midi_out_pins[i],  LOW);    // enable on LOW
+  }
+
   // initialize MIDI LED state (off) and blink
   for (uint8_t i = 0; i < 4; i++)
   {
@@ -80,12 +95,6 @@ void setup()
     delay(100);
   }
 
-  // MIDI outputs
-  for (byte i = 0; i < NBR_MIDI_OUTS; i++)
-  {
-    pinMode(midi_out_pins[i],       OUTPUT);
-    digitalWrite(midi_out_pins[i],  LOW);    // enable on LOW
-  }
 
   // Set a 1kHz timer for non-blocking Trigger and blinking durations/delays
   TCCR0A |= (1 << WGM01);                       // Set Timer0 to CTC (Clear Timer on Compare Match) mode
@@ -111,10 +120,10 @@ void loop()
   }
 
   // update MIDI LED if required
-  if (needs_refresh)
+  if (MIDI_LED_needs_refresh)
   {
     render_MIDI_LED();
-    needs_refresh = false;
+    MIDI_LED_needs_refresh = false;
   }
 
   if (control_clock_tick)
@@ -126,5 +135,5 @@ void loop()
 
 void render_MIDI_LED()
 {
-  digitalWrite(MIDI_LED,MIDI_blink > 0 ? LOW : HIGH);
+  digitalWrite(MIDI_LED,MIDI_blink_counter > 0 ? LOW : HIGH);
 }
