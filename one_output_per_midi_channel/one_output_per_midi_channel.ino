@@ -23,6 +23,11 @@
     2, 3, 4, 5, 6, 7, 8, 9
   };    // array of output pin numbers (Arduino #)
 
+  byte midi_outputs[16] = {
+  // ch: 1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16  
+         1, 2, 3, 4, 5, 6, 7, 0, 0, 8, 0, 0, 0, 0, 0, 0
+  };    // output number (1-8) for each MIDI channel, 0 = no output
+
 
 #define SYS_MSG_FILTER 0xF0
 
@@ -137,11 +142,11 @@ void loop()
     }
     else  // this is a channel message
     {
-      // exclude messages that are out of range (channel > 8)
-      if ((channel > 0) && (channel <= 8))
+      byte output = midi_outputs[channel - 1];
+      if (output > 0)
       {
         // enable the output corresponding to the incoming MIDI message channel
-        digitalWrite(midi_out_pins[channel - 1], LOW);
+        digitalWrite(midi_out_pins[output - 1], LOW);
 
         // write the message back
         MIDI.send(type,
@@ -153,7 +158,7 @@ void loop()
         Serial.flush();
   
         // disable the output
-        digitalWrite(midi_out_pins[channel - 1], HIGH);
+        digitalWrite(midi_out_pins[output - 1], HIGH);
       }
     }
 
