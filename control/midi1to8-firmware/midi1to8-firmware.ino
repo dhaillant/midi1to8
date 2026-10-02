@@ -77,6 +77,12 @@ bool MIDI_LED_needs_refresh;
 uint8_t MIDI_blink_counter;
 #define MIDI_LED_BLINK_TIME 20
 
+// Preset indication, run from tick() so MIDI keeps flowing meanwhile:
+// phases count down, LED on during even phases and off during odd ones
+uint8_t preset_blink_phases;
+uint8_t preset_blink_timer;
+#define PRESET_BLINK_TIME 150
+
 // ============================================================================
 // 1kHz Timer for LED blinking
 // ============================================================================
@@ -92,6 +98,12 @@ void tick() {
   } else {
     MIDI_LED_needs_refresh = true;
   }
+
+  if (preset_blink_phases && --preset_blink_timer == 0) {
+    --preset_blink_phases;
+    preset_blink_timer = PRESET_BLINK_TIME;
+    MIDI_LED_needs_refresh = true;
+  }
 }
 
 void blink_MIDI_LED(void) {
@@ -100,7 +112,12 @@ void blink_MIDI_LED(void) {
 }
 
 void render_MIDI_LED() {
-  digitalWrite(MIDI_LED, MIDI_blink_counter > 0 ? LOW : HIGH);
+  if (preset_blink_phases) {
+    // Preset indication takes over the LED until it is done
+    digitalWrite(MIDI_LED, (preset_blink_phases & 1) ? HIGH : LOW);
+  } else {
+    digitalWrite(MIDI_LED, MIDI_blink_counter > 0 ? LOW : HIGH);
+  }
 }
 
 // ============================================================================
@@ -109,12 +126,11 @@ void render_MIDI_LED() {
 void indicate_preset(byte preset_num) {
   // Blink LED (preset_num + 1) times to show which preset is active
   // Preset 0 = 1 blink, Preset 7 = 8 blinks
-  for (byte i = 0; i < preset_num + 1; i++) {
-    digitalWrite(MIDI_LED, LOW);   // LED ON
-    delay(150);
-    digitalWrite(MIDI_LED, HIGH);  // LED OFF
-    delay(150);
-  }
+  // Non-blocking: this runs inside the Program Change callback, and the
+  // delay() loop it replaces stopped all routing for up to 2.4 s.
+  preset_blink_phases = 2 * (preset_num + 1);
+  preset_blink_timer = PRESET_BLINK_TIME;
+  MIDI_LED_needs_refresh = true;
 }
 
 // ============================================================================
