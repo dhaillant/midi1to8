@@ -9,10 +9,6 @@
  * https://github.com/FortySevenEffects/arduino_midi_library
  */
 
-// CRITICAL: Define buffer size BEFORE including MIDI.h
-// Our SysEx messages are 25 bytes, so we need at least 32 bytes buffer
-#define MIDI_SYSEX_ARRAY_SIZE 64
-
 #include "sysex_handling.h"
 #include <MIDI.h>
 #include "MidiInputGuard.h"
