@@ -33,11 +33,15 @@
 
 
 #include <MIDI.h>
+#include "MidiInputGuard.h"
 
 // MIDI Channel we want to react to
 #define MIDI_CHANNEL MIDI_CHANNEL_OMNI
 
-MIDI_CREATE_DEFAULT_INSTANCE();
+// The guard keeps a corrupt or truncated SysEx from locking up the parser
+// (see MidiInputGuard.h)
+MidiInputGuard<HardwareSerial> guardedSerial(Serial);
+midi::MidiInterface<MidiInputGuard<HardwareSerial>> MIDI(guardedSerial);
 
 
 // blink stuff for input
