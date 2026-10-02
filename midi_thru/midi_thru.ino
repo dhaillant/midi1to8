@@ -1,33 +1,62 @@
 /*
  * Simple MIDI Thru
- * 
+ *
  * All MIDI messages are transmitted on outputs 1 to 8
- * 
- * 
- * Requires the Arduino MIDI Library:
- * https://github.com/FortySevenEffects/arduino_midi_library
- * 
+ *
+ * Byte-level pass-through: every byte received on the UART is pushed straight
+ * back out. There is no MIDI parser, and therefore no parser state that can
+ * get stuck.
+ *
+ * Why the Arduino MIDI Library is not used here:
+ * its parser has a one-way trap. Once it sees an 0xF0 - a real SysEx, or just
+ * one corrupted byte on the input line - it stays in SysEx mode until an 0xF7
+ * arrives. While in that state, Note On/Off/CC status bytes are swallowed into
+ * the SysEx buffer instead of being forwarded. Real-time bytes (Clock, Start,
+ * Stop) bypass the state machine, so the module keeps passing clock and the
+ * LED keeps blinking while every note silently disappears, until it is power
+ * cycled. A thru does not need to understand the messages it forwards, so it
+ * does not need a parser at all.
+ *
 */
 
   // Pin definitions
   #define MIDI_LED A0
-  
+
   #define MIDI_IN 0
   #define MIDI_OUT 1
-  
+
   #define NBR_MIDI_OUTS 8
-  
+
   byte midi_out_pins[NBR_MIDI_OUTS] = {
     2, 3, 4, 5, 6, 7, 8, 9
   };    // array of output pin numbers (Arduino #)
 
 
-#include <MIDI.h>
+// MIDI baud rate
+#define MIDI_BAUD 31250
 
-// MIDI Channel we want to react to
-#define MIDI_CHANNEL MIDI_CHANNEL_OMNI
+// Blink the LED on musical data only. MIDI clock is sent 24 times per quarter
+// note, so counting it here would keep the LED permanently lit while a
+// sequencer is running. Set to 0 to blink on every byte instead.
+#define BLINK_ON_REALTIME 0
 
-MIDI_CREATE_DEFAULT_INSTANCE();
+// Optional hardware watchdog.
+// The byte router has no state of its own that can lock up, so there is
+// nothing left for a software "unstick" timer to reset. What is still worth
+// guarding against is the CPU itself stopping - a brown-out while patching, a
+// glitch that corrupts the stack. The WDT resets the board if loop() stops
+// running for 500 ms.
+//
+// WARNING: only enable this if the board has the Optiboot bootloader (Arduino
+// Uno, or a Nano burned as "ATmega328P" rather than "ATmega328P (Old
+// Bootloader)"). The old ATmegaBOOT bootloader does not clear the watchdog
+// reset flag at startup, so the board would reset in a loop and could only be
+// recovered with an ISP programmer. If unsure, leave this at 0.
+#define USE_WATCHDOG 0
+
+#if USE_WATCHDOG
+  #include <avr/wdt.h>
+#endif
 
 
 // blink stuff for input
@@ -103,20 +132,35 @@ void setup()
   TIMSK0 |= (1 << OCIE0A);                      // Enable timer compare interrupt
   sei();                                        // Enable interrupts
 
-  MIDI.turnThruOn();
+  // Open the UART at MIDI baud rate. RX is the MIDI input, TX feeds all 8
+  // output gates in parallel.
+  Serial.begin(MIDI_BAUD);
 
-  // Initiate MIDI communications, listen to ALL channels
-  MIDI.begin(MIDI_CHANNEL);
+#if USE_WATCHDOG
+  // Armed last, so it cannot fire during the startup LED animation above
+  wdt_enable(WDTO_500MS);
+#endif
 }
 
 void loop()
 {
-  // read incomming MIDI messages
-  if (MIDI.read())
+  // Forward every incoming byte as it arrives.
+  // No buffering, no parsing: a byte in is a byte out, so nothing here can
+  // desynchronise or latch into a bad state. This also removes the
+  // store-and-forward latency of waiting for a complete 3-byte message.
+  //
+  // Serial.flush() is not needed: the output gates are wired permanently open
+  // in setup(), so there is nothing to wait for before closing them.
+  while (Serial.available())
   {
+    byte b = Serial.read();
+    Serial.write(b);
+
+#if BLINK_ON_REALTIME
     blink_MIDI_LED();
-    // wait until transmit buffer is empty
-    //Serial.flush();
+#else
+    if (b < 0xF8) blink_MIDI_LED();   // skip Clock and the other real-time bytes
+#endif
   }
 
   // update MIDI LED if required
@@ -131,6 +175,10 @@ void loop()
     --control_clock_tick;
     tick();
   }
+
+#if USE_WATCHDOG
+  wdt_reset();
+#endif
 }
 
 void render_MIDI_LED()
