@@ -15,6 +15,7 @@
 
 #include "sysex_handling.h"
 #include <MIDI.h>
+#include "MidiInputGuard.h"
 #include <EEPROM.h>
 
 // ============================================================================
@@ -45,7 +46,10 @@ byte midi_out_pins[NBR_MIDI_OUTS] = {
 // ============================================================================
 #define MIDI_CHANNEL MIDI_CHANNEL_OMNI
 #define PRESET_CHANGE_CHANNEL 16  // Channel 16 for preset switching
-MIDI_CREATE_DEFAULT_INSTANCE();
+// The guard keeps a corrupt or truncated SysEx from locking up the parser
+// (see MidiInputGuard.h)
+MidiInputGuard<HardwareSerial> guardedSerial(Serial);
+midi::MidiInterface<MidiInputGuard<HardwareSerial>> MIDI(guardedSerial);
 
 // ============================================================================
 // Multi-Preset Support
