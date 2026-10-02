@@ -398,6 +398,12 @@ void handleSysEx(byte* data, unsigned int length) {
   if (length < 5) {
     return;
   }
+
+  // A SysEx longer than the library's buffer arrives in chunks
+  // (F0 ... F0, F7 ... F0, F7 ... F7): only accept a message that is whole.
+  if (data[0] != SYSEX_START || data[length - 1] != SYSEX_END) {
+    return;
+  }
   
   // Check manufacturer (at index 1, after F0)
   if (data[1] != MANUFACTURER) {
@@ -446,7 +452,8 @@ void handleSysEx(byte* data, unsigned int length) {
       // Data: [F0][7D][18][01][03][preset_num][20 bytes packed data][F7]
       // So preset_num at index 5, packed data starts at index 6
       // Total length should be: 1(F0) + 4(header) + 1(preset) + 20(data) + 1(F7) = 27
-      if (length >= 27) {
+      // Exactly 27: a message cut short arrives closed by MidiInputGuard's F7.
+      if (length == 27) {
         byte target_preset = data[5];
         write_preset_to_device(&data[6], 20, target_preset);
       }
