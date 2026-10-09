@@ -9,12 +9,9 @@
  * https://github.com/FortySevenEffects/arduino_midi_library
  */
 
-// CRITICAL: Define buffer size BEFORE including MIDI.h
-// Our SysEx messages are 25 bytes, so we need at least 32 bytes buffer
-#define MIDI_SYSEX_ARRAY_SIZE 64
-
 #include "sysex_handling.h"
 #include <MIDI.h>
+#include "MidiInputGuard.h"
 #include <EEPROM.h>
 
 // ============================================================================
@@ -45,7 +42,10 @@ byte midi_out_pins[NBR_MIDI_OUTS] = {
 // ============================================================================
 #define MIDI_CHANNEL MIDI_CHANNEL_OMNI
 #define PRESET_CHANGE_CHANNEL 16  // Channel 16 for preset switching
-MIDI_CREATE_DEFAULT_INSTANCE();
+// The guard keeps a corrupt or truncated SysEx from locking up the parser
+// (see MidiInputGuard.h)
+MidiInputGuard<HardwareSerial> guardedSerial(Serial);
+midi::MidiInterface<MidiInputGuard<HardwareSerial>> MIDI(guardedSerial);
 
 // ============================================================================
 // Multi-Preset Support
@@ -77,6 +77,12 @@ bool MIDI_LED_needs_refresh;
 uint8_t MIDI_blink_counter;
 #define MIDI_LED_BLINK_TIME 20
 
+// Preset indication, run from tick() so MIDI keeps flowing meanwhile:
+// phases count down, LED on during even phases and off during odd ones
+uint8_t preset_blink_phases;
+uint8_t preset_blink_timer;
+#define PRESET_BLINK_TIME 150
+
 // ============================================================================
 // 1kHz Timer for LED blinking
 // ============================================================================
@@ -92,6 +98,12 @@ void tick() {
   } else {
     MIDI_LED_needs_refresh = true;
   }
+
+  if (preset_blink_phases && --preset_blink_timer == 0) {
+    --preset_blink_phases;
+    preset_blink_timer = PRESET_BLINK_TIME;
+    MIDI_LED_needs_refresh = true;
+  }
 }
 
 void blink_MIDI_LED(void) {
@@ -100,7 +112,12 @@ void blink_MIDI_LED(void) {
 }
 
 void render_MIDI_LED() {
-  digitalWrite(MIDI_LED, MIDI_blink_counter > 0 ? LOW : HIGH);
+  if (preset_blink_phases) {
+    // Preset indication takes over the LED until it is done
+    digitalWrite(MIDI_LED, (preset_blink_phases & 1) ? HIGH : LOW);
+  } else {
+    digitalWrite(MIDI_LED, MIDI_blink_counter > 0 ? LOW : HIGH);
+  }
 }
 
 // ============================================================================
@@ -109,12 +126,11 @@ void render_MIDI_LED() {
 void indicate_preset(byte preset_num) {
   // Blink LED (preset_num + 1) times to show which preset is active
   // Preset 0 = 1 blink, Preset 7 = 8 blinks
-  for (byte i = 0; i < preset_num + 1; i++) {
-    digitalWrite(MIDI_LED, LOW);   // LED ON
-    delay(150);
-    digitalWrite(MIDI_LED, HIGH);  // LED OFF
-    delay(150);
-  }
+  // Non-blocking: this runs inside the Program Change callback, and the
+  // delay() loop it replaces stopped all routing for up to 2.4 s.
+  preset_blink_phases = 2 * (preset_num + 1);
+  preset_blink_timer = PRESET_BLINK_TIME;
+  MIDI_LED_needs_refresh = true;
 }
 
 // ============================================================================
@@ -394,6 +410,12 @@ void handleSysEx(byte* data, unsigned int length) {
   if (length < 5) {
     return;
   }
+
+  // A SysEx longer than the library's buffer arrives in chunks
+  // (F0 ... F0, F7 ... F0, F7 ... F7): only accept a message that is whole.
+  if (data[0] != SYSEX_START || data[length - 1] != SYSEX_END) {
+    return;
+  }
   
   // Check manufacturer (at index 1, after F0)
   if (data[1] != MANUFACTURER) {
@@ -442,7 +464,8 @@ void handleSysEx(byte* data, unsigned int length) {
       // Data: [F0][7D][18][01][03][preset_num][20 bytes packed data][F7]
       // So preset_num at index 5, packed data starts at index 6
       // Total length should be: 1(F0) + 4(header) + 1(preset) + 20(data) + 1(F7) = 27
-      if (length >= 27) {
+      // Exactly 27: a message cut short arrives closed by MidiInputGuard's F7.
+      if (length == 27) {
         byte target_preset = data[5];
         write_preset_to_device(&data[6], 20, target_preset);
       }
